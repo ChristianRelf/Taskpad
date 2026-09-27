@@ -34,10 +34,14 @@ class App {
     const bar = el(
       "header",
       { class: "topbar" },
-      this.wordmark,
-      el("span", { class: "topbar-spacer" }),
-      this.percent,
-      this.menuButton,
+      el(
+        "div",
+        { class: "topbar-inner" },
+        this.wordmark,
+        el("span", { class: "topbar-spacer" }),
+        this.percent,
+        this.menuButton,
+      ),
     );
 
     this.errorBar = el("div", { class: "errorbar", role: "status", hidden: true });

@@ -96,22 +96,15 @@ export class Checklist {
     if (hasChildren) row.setAttribute("aria-expanded", String(!task.collapsed));
 
     // Reorder handle. Kept in a fixed gutter so hovering never shifts the row.
-    const grip = iconButton(Icons.grip(), `Reorder ${labelOf(task)}`, () => {}, { class: "grip" });
-    grip.setAttribute("draggable", "true");
-    grip.tabIndex = -1;
-    grip.addEventListener("dragstart", (ev) => {
-      const dt = (ev as DragEvent).dataTransfer;
-      dt?.setData("text/pad-task", task.id);
-      dt?.setDragImage(row, 12, 12);
-      if (dt) dt.effectAllowed = "move";
-      row.classList.add("is-dragging");
-      dragging = task.id;
+    const grip = el("span", {
+      class: "grip",
+      role: "button",
+      tabindex: "-1",
+      "aria-label": `Drag to move ${labelOf(task)}`,
+      title: "Drag to move. Alt+arrows also work.",
     });
-    grip.addEventListener("dragend", () => {
-      row.classList.remove("is-dragging");
-      dragging = null;
-      clearDropMarks(this.list);
-    });
+    grip.appendChild(Icons.grip());
+    grip.addEventListener("pointerdown", (ev) => this.beginDrag(ev, row, node));
     row.appendChild(grip);
 
     const twisty = el("span", { class: "twisty-slot" });
@@ -200,7 +193,6 @@ export class Checklist {
       ),
     );
 
-    this.wireDropTarget(row, node);
     if (this.editingId === task.id) {
       queueMicrotask(() => this.startEdit(task, row, title));
     }
@@ -390,44 +382,114 @@ export class Checklist {
     }
   }
 
-  // -------------------------------------------------------------- drag drop
+  // -------------------------------------------------------------- reorder
 
-  private wireDropTarget(row: HTMLElement, node: TreeNode): void {
-    row.addEventListener("dragover", (ev) => {
-      if (!dragging || dragging === node.task.id) return;
-      if (isAncestor(dragging, node.task.id)) return; // would detach a branch
-      ev.preventDefault();
-      const zone = dropZone(ev as DragEvent, row);
-      clearDropMarks(this.list);
-      row.classList.add(`drop-${zone}`);
-      if ((ev as DragEvent).dataTransfer) {
-        (ev as DragEvent).dataTransfer!.dropEffect = "move";
-      }
-    });
-    row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after", "drop-into"));
-    row.addEventListener("drop", (ev) => {
-      ev.preventDefault();
-      const id = dragging;
-      clearDropMarks(this.list);
-      if (!id || id === node.task.id || isAncestor(id, node.task.id)) return;
-      const zone = dropZone(ev as DragEvent, row);
-      dragging = null;
+  /**
+   * Pointer-driven reordering. The row under the cursor is split into three
+   * zones: the top and bottom edges drop the task beside it, the middle nests
+   * it inside. Drop targets inside the dragged task's own subtree are refused,
+   * so a branch can never be moved under itself.
+   */
+  private beginDrag(ev: PointerEvent, row: HTMLElement, node: TreeNode): void {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
 
-      let parentId: string | null;
-      let afterId: string | null;
-      if (zone === "into") {
-        parentId = node.task.id;
-        afterId = lastChildId(node);
-      } else {
-        parentId = node.task.parentId;
-        const siblings = store.childrenNodes(parentId);
-        const at = siblings.findIndex((n) => n.task.id === node.task.id);
-        afterId =
-          zone === "after" ? node.task.id : (siblings[at - 1]?.task.id ?? null);
+    const startY = ev.clientY;
+    const startX = ev.clientX;
+    let active = false;
+    let target: { id: string; zone: Zone } | null = null;
+
+    const move = (e: PointerEvent) => {
+      if (!active) {
+        if (Math.abs(e.clientY - startY) + Math.abs(e.clientX - startX) < 4) return;
+        active = true;
+        row.classList.add("is-dragging");
+        document.body.classList.add("is-reordering");
       }
-      this.focusId = id;
-      void store.run(() => api.moveTask(id, parentId, afterId));
-    });
+      target = this.dropTargetAt(e.clientX, e.clientY, node.task.id);
+      clearDropMarks(this.list);
+      if (target) {
+        this.list
+          .querySelector(`[data-id="${cssId(target.id)}"]`)
+          ?.classList.add(`drop-${target.zone}`);
+      }
+      this.autoScroll(e.clientY);
+    };
+
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", onKey, true);
+      row.classList.remove("is-dragging");
+      document.body.classList.remove("is-reordering");
+      clearDropMarks(this.list);
+      if (!commit || !active || !target) return;
+      this.applyDrop(node.task.id, target);
+    };
+
+    const up = () => finish(true);
+    const cancel = () => finish(false);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false);
+      }
+    };
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", onKey, true);
+  }
+
+  private dropTargetAt(x: number, y: number, draggedId: string): { id: string; zone: Zone } | null {
+    const under = document
+      .elementFromPoint(x, y)
+      ?.closest<HTMLElement>(".row");
+    if (!under) return null;
+    const id = under.dataset.id;
+    if (!id || id === draggedId) return null;
+    // Refuse anything inside the moving branch.
+    if (isAncestor(draggedId, id)) return null;
+    return { id, zone: dropZone(y, under) };
+  }
+
+  private applyDrop(draggedId: string, target: { id: string; zone: Zone }): void {
+    const node = store.node(target.id);
+    if (!node) return;
+
+    let parentId: string | null;
+    let afterId: string | null;
+    if (target.zone === "into") {
+      parentId = target.id;
+      afterId = lastChildId(node);
+    } else {
+      parentId = node.task.parentId;
+      const siblings = store.childrenNodes(parentId);
+      const at = siblings.findIndex((n) => n.task.id === target.id);
+      afterId = target.zone === "after" ? target.id : (siblings[at - 1]?.task.id ?? null);
+      // Dropping just below a row that is showing its children means "first
+      // child", which is what the eye expects from where the line is drawn.
+      if (target.zone === "after" && node.children.length > 0 && !node.task.collapsed) {
+        parentId = target.id;
+        afterId = null;
+      }
+    }
+    if (afterId === draggedId) return;
+    this.focusId = draggedId;
+    void store.run(() => api.moveTask(draggedId, parentId, afterId));
+  }
+
+  /** Keep the pointer's row in view when dragging near an edge. */
+  private autoScroll(clientY: number): void {
+    const scroller = this.element.closest<HTMLElement>(".body");
+    if (!scroller) return;
+    const rect = scroller.getBoundingClientRect();
+    const margin = 28;
+    if (clientY < rect.top + margin) scroller.scrollTop -= 10;
+    else if (clientY > rect.bottom - margin) scroller.scrollTop += 10;
   }
 }
 
@@ -541,13 +603,13 @@ class Composer {
 
 // ------------------------------------------------------------------ helpers
 
-let dragging: string | null = null;
+type Zone = "before" | "into" | "after";
 
-function dropZone(ev: DragEvent, row: HTMLElement): "before" | "into" | "after" {
+function dropZone(clientY: number, row: HTMLElement): Zone {
   const rect = row.getBoundingClientRect();
-  const offset = (ev.clientY - rect.top) / rect.height;
-  if (offset < 0.28) return "before";
-  if (offset > 0.72) return "after";
+  const offset = (clientY - rect.top) / rect.height;
+  if (offset < 0.3) return "before";
+  if (offset > 0.7) return "after";
   return "into";
 }
 

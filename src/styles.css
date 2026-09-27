@@ -91,16 +91,23 @@ body {
 /* ------------------------------------------------------------------ topbar */
 
 .topbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   flex: none;
   height: 38px;
-  padding: 0 max(var(--pad-x), calc((100% - var(--content-width)) / 2 - 16px));
   border-bottom: 1px solid var(--line);
   background: var(--bg);
   -webkit-app-region: drag;
   user-select: none;
+}
+
+/* Shares the checklist's column so the wordmark lines up with the tasks. */
+.topbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  max-width: var(--content-width);
+  margin: 0 auto;
+  padding: 0 var(--pad-x);
 }
 
 .topbar button {
@@ -250,15 +257,33 @@ body {
 
 /* Reorder handle sits in a reserved gutter, so hover never shifts the row. */
 .grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 16px;
   height: 20px;
+  flex: none;
   margin-left: calc(-1 * var(--pad-x));
   color: var(--text-faint);
   opacity: 0;
   cursor: grab;
+  touch-action: none;
   transition: opacity var(--fast) var(--ease);
 }
+.grip:hover {
+  color: var(--text-dim);
+}
 .grip:active {
+  cursor: grabbing;
+}
+
+/* While a row is in flight, nothing else should look clickable. */
+body.is-reordering {
+  cursor: grabbing;
+  user-select: none;
+}
+body.is-reordering .row-body,
+body.is-reordering .check {
   cursor: grabbing;
 }
 .row:hover .grip,
@@ -829,7 +854,7 @@ body {
 .menu-panel {
   position: absolute;
   top: 34px;
-  right: max(10px, calc((100% - var(--content-width)) / 2 - 18px));
+  right: max(6px, calc((100% - var(--content-width)) / 2 + 6px));
   width: 224px;
   padding: 4px;
   border: 1px solid var(--line-strong);
