@@ -23,6 +23,11 @@ export class Checklist {
   /** Row to re-focus after the list is rebuilt. */
   private focusId: string | null = null;
   private editingId: string | null = null;
+  /**
+   * Roving tabindex: the list is a single tab stop and the arrows move within
+   * it, so a pad with hundreds of tasks does not become hundreds of tab stops.
+   */
+  private activeId: string | null = null;
 
   constructor(opts: ChecklistOptions) {
     this.opts = opts;
@@ -30,6 +35,10 @@ export class Checklist {
     this.composer = new Composer(opts.parentId, () => this.render());
     this.element = el("div", { class: "checklist" }, this.list, this.composer.element);
     this.list.addEventListener("keydown", (ev) => this.onKeyDown(ev));
+    this.list.addEventListener("focusin", (ev) => {
+      const row = (ev.target as HTMLElement).closest<HTMLElement>(".row");
+      if (row?.dataset.id) this.setActive(row.dataset.id);
+    });
   }
 
   setParent(parentId: string | null): void {
@@ -68,11 +77,15 @@ export class Checklist {
     for (const node of shown) {
       this.list.appendChild(this.renderRow(node));
     }
+    if (!shown.some((n) => n.task.id === this.activeId)) {
+      this.activeId = shown[0]?.task.id ?? null;
+    }
+    this.applyRovingTabindex();
     this.composer.render();
 
     if (this.focusId) {
-      const row = this.list.querySelector<HTMLElement>(`[data-id="${cssId(this.focusId)}"]`);
-      row?.focus();
+      this.setActive(this.focusId);
+      this.list.querySelector<HTMLElement>(`[data-id="${cssId(this.focusId)}"]`)?.focus();
       this.focusId = null;
     }
   }
@@ -88,7 +101,7 @@ export class Checklist {
       class: `row${done ? " is-done" : ""}`,
       "data-id": task.id,
       role: "treeitem",
-      tabindex: "0",
+      tabindex: "-1",
       "aria-level": String(depth + 1),
       "aria-selected": "false",
       style: `--depth:${depth}`,
@@ -117,7 +130,7 @@ export class Checklist {
             this.focusId = task.id;
             void store.run(() => api.updateTask(task.id, { collapsed: !task.collapsed }));
           },
-          { class: "twisty", pressed: !task.collapsed },
+          { class: "twisty", pressed: !task.collapsed, tabbable: false },
         ),
       );
     }
@@ -161,12 +174,9 @@ export class Checklist {
     }
     if (meta.childElementCount > 0) body.appendChild(meta);
 
+    // Opening has to be instant, so there is no double-click to wait out here;
+    // renaming in place is F2 (or the title field once the task is open).
     body.addEventListener("click", () => this.opts.onOpen(task.id));
-    body.addEventListener("dblclick", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      this.startEdit(task, row, title);
-    });
     row.appendChild(body);
 
     if (hasChildren) {
@@ -186,9 +196,11 @@ export class Checklist {
         { class: "row-actions" },
         iconButton(Icons.plus(), `Add a subtask to ${labelOf(task)}`, () => this.opts.onOpen(task.id), {
           class: "row-action",
+          tabbable: false,
         }),
         iconButton(Icons.trash(), `Delete ${labelOf(task)}`, () => this.confirmDelete(node), {
           class: "row-action",
+          tabbable: false,
         }),
       ),
     );
@@ -197,6 +209,21 @@ export class Checklist {
       queueMicrotask(() => this.startEdit(task, row, title));
     }
     return row;
+  }
+
+  private setActive(id: string): void {
+    if (this.activeId === id) return;
+    this.activeId = id;
+    this.applyRovingTabindex();
+  }
+
+  private applyRovingTabindex(): void {
+    const rows = this.list.querySelectorAll<HTMLElement>(".row");
+    rows.forEach((row) => {
+      row.tabIndex = row.dataset.id === this.activeId ? 0 : -1;
+    });
+    // Nothing active yet (empty list aside) still needs one way in.
+    if (this.activeId === null && rows.length > 0) rows[0].tabIndex = 0;
   }
 
   // ------------------------------------------------------------ interaction
@@ -274,9 +301,9 @@ export class Checklist {
       } else if (ev.key === "Escape") {
         ev.preventDefault();
         cancel();
-      } else if (ev.key === "Tab") {
+      } else if (isTab(ev)) {
         ev.preventDefault();
-        commit(ev.shiftKey ? "outdent" : "indent");
+        commit(isBackTab(ev) ? "outdent" : "indent");
       }
     });
     input.addEventListener("blur", () => commit());
@@ -325,7 +352,9 @@ export class Checklist {
     const index = rows.indexOf(row);
     const focusAt = (i: number) => {
       const next = rows[Math.max(0, Math.min(rows.length - 1, i))];
-      next?.focus();
+      if (!next?.dataset.id) return;
+      this.setActive(next.dataset.id);
+      next.focus();
     };
 
     switch (ev.key) {
@@ -356,6 +385,7 @@ export class Checklist {
           this.focusId = task.id;
           void store.run(() => api.updateTask(task.id, { collapsed: true }));
         } else if (task.parentId && task.parentId !== this.opts.parentId) {
+          this.setActive(task.parentId);
           this.focusId = task.parentId;
           this.render();
         }
@@ -583,13 +613,13 @@ class Composer {
       );
       return;
     }
-    if (ev.key === "Tab" && this.lastCreatedId) {
+    if (isTab(ev) && this.lastCreatedId) {
       // Tab nests the *next* task under the one just added, matching how the
       // same keys work while renaming a row.
       ev.preventDefault();
       const last = store.task(this.lastCreatedId);
       if (!last) return;
-      if (ev.shiftKey) {
+      if (isBackTab(ev)) {
         if (last.parentId === null || last.parentId === this.parentId) return;
         this.parentId = store.task(last.parentId)?.parentId ?? null;
       } else {
@@ -602,6 +632,18 @@ class Composer {
 }
 
 // ------------------------------------------------------------------ helpers
+
+/*
+ * Shift+Tab arrives as the ISO_Left_Tab keysym on X11, which this webview
+ * reports as its own key rather than Tab-with-shift. Both spellings count.
+ */
+function isTab(ev: KeyboardEvent): boolean {
+  return ev.key === "Tab" || ev.key === "ISO_Left_Tab" || ev.code === "Tab";
+}
+
+function isBackTab(ev: KeyboardEvent): boolean {
+  return ev.shiftKey || ev.key === "ISO_Left_Tab";
+}
 
 type Zone = "before" | "into" | "after";
 

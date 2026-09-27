@@ -177,9 +177,10 @@ export class Menu {
       ["Alt+← / Alt+→", "Outdent or indent"],
       ["Space", "Complete or reopen"],
       ["Enter on a task", "Open it"],
-      ["F2 or double-click", "Rename in place"],
+      ["F2", "Rename in place"],
       ["← / →", "Collapse or expand"],
       ["Delete", "Delete the task"],
+      ["N", "Start a new task"],
       ["Escape", "Back, or close what is open"],
     ];
     showSheet(

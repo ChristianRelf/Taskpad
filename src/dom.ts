@@ -38,7 +38,7 @@ export function iconButton(
   icon: SVGElement,
   label: string,
   onClick: (ev: MouseEvent) => void,
-  opts: { class?: string; pressed?: boolean } = {},
+  opts: { class?: string; pressed?: boolean; tabbable?: boolean } = {},
 ): HTMLButtonElement {
   const button = el("button", {
     class: `icon-button${opts.class ? " " + opts.class : ""}`,
@@ -47,6 +47,9 @@ export function iconButton(
     title: label,
   });
   if (opts.pressed !== undefined) button.setAttribute("aria-expanded", String(opts.pressed));
+  // Inside a tree, only the active row is a tab stop; its controls are reached
+  // with the pointer or the row's own shortcuts.
+  if (opts.tabbable === false) button.tabIndex = -1;
   button.appendChild(icon);
   button.addEventListener("click", (ev) => {
     ev.stopPropagation();
