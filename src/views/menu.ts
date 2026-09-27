@@ -172,6 +172,7 @@ export class Menu {
     const rows: [string, string][] = [
       ["Enter", "Add the typed task, ready for the next"],
       ["Tab / Shift+Tab", "Nest the task deeper or shallower"],
+      ["Tab", "Into the checklist, then on out of it"],
       ["↑ / ↓", "Move between tasks"],
       ["Alt+↑ / Alt+↓", "Reorder within the list"],
       ["Alt+← / Alt+→", "Outdent or indent"],
