@@ -74,9 +74,13 @@ export class Checklist {
         ),
       );
     }
-    for (const node of shown) {
-      this.list.appendChild(this.renderRow(node));
-    }
+    shown.forEach((node, i) => {
+      const row = this.renderRow(node);
+      // The tree is rendered flat, so each row states its own place in it.
+      row.setAttribute("aria-posinset", String(i + 1));
+      row.setAttribute("aria-setsize", String(shown.length));
+      this.list.appendChild(row);
+    });
     if (!shown.some((n) => n.task.id === this.activeId)) {
       this.activeId = shown[0]?.task.id ?? null;
     }
@@ -265,22 +269,20 @@ export class Checklist {
     input.select();
 
     let settled = false;
-    const commit = (nextAction?: "indent" | "outdent" | "new") => {
+    const commit = (nextAction?: "indent" | "outdent") => {
       if (settled) return;
       settled = true;
       this.editingId = null;
       const value = input.value.trim();
-      const changed = value !== task.title;
+      // Emptying the field is not a way to blank a task; the old title stands
+      // and the row can still be deleted outright.
+      const changed = value !== "" && value !== task.title;
       const work: Promise<unknown>[] = [];
       if (changed) work.push(api.updateTask(task.id, { title: value }));
       void Promise.all(work).then(async () => {
         if (nextAction === "indent") await this.indent(task, 1);
         else if (nextAction === "outdent") await this.indent(task, -1);
-        else if (nextAction === "new") {
-          await store.refresh();
-          this.composer.open();
-          return;
-        } else {
+        else {
           this.focusId = task.id;
           await store.refresh();
         }
@@ -297,7 +299,7 @@ export class Checklist {
     input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
         ev.preventDefault();
-        commit("new");
+        commit();
       } else if (ev.key === "Escape") {
         ev.preventDefault();
         cancel();
@@ -558,7 +560,9 @@ class Composer {
 
     this.input.addEventListener("keydown", (ev) => this.onKeyDown(ev));
     this.input.addEventListener("blur", () => {
+      // Clicking away should not throw the line away.
       if (this.input.value.trim() === "") this.close();
+      else this.submit(true);
     });
   }
 
@@ -585,32 +589,39 @@ class Composer {
     this.lastCreatedId = null;
   }
 
+  /** Create whatever has been typed. `andClose` ends the run of additions. */
+  private submit(andClose: boolean): void {
+    const title = this.input.value.trim();
+    if (!title) {
+      if (andClose) this.close();
+      return;
+    }
+    this.input.value = "";
+    const parentId = this.parentId;
+    const afterId = this.lastCreatedId;
+    void store.run(
+      () => api.createTask(parentId, afterId, title),
+      (task) => {
+        this.lastCreatedId = task.id;
+        announce(`Added ${title}`);
+        this.onChanged();
+        if (andClose) this.close();
+        else this.input.focus();
+      },
+    );
+  }
+
   private onKeyDown(ev: KeyboardEvent): void {
     if (ev.key === "Escape") {
       ev.preventDefault();
+      this.input.value = "";
       this.close();
       this.trigger.focus();
       return;
     }
     if (ev.key === "Enter") {
       ev.preventDefault();
-      const title = this.input.value.trim();
-      if (!title) {
-        this.close();
-        return;
-      }
-      this.input.value = "";
-      const parentId = this.parentId;
-      const afterId = this.lastCreatedId;
-      void store.run(
-        () => api.createTask(parentId, afterId, title),
-        (task) => {
-          this.lastCreatedId = task.id;
-          announce(`Added ${title}`);
-          this.onChanged();
-          this.input.focus();
-        },
-      );
+      this.submit(false);
       return;
     }
     if (isTab(ev) && this.lastCreatedId) {
