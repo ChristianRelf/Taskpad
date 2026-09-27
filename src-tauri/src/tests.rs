@@ -502,3 +502,69 @@ fn a_large_pad_snapshots_quickly() {
     assert_eq!(snap.tasks.len(), 2000);
     assert!(elapsed.as_millis() < 500, "snapshot took {elapsed:?}");
 }
+
+#[test]
+fn an_inconsistent_pack_has_its_completion_rebuilt() {
+    let db = new_pad();
+    let parent = add(&db, None, "parent");
+    let child = add(&db, Some(&parent), "child");
+    let grandchild = add(&db, Some(&child), "grandchild");
+
+    let mut pack = transfer::build_pack(&db.lock()).unwrap();
+    // A pack that claims the branch is done while the leaf is still open.
+    for task in &mut pack.tasks {
+        if task.id != grandchild {
+            task.completed_at = Some(1);
+        }
+    }
+
+    let target = new_pad();
+    let report = transfer::import_pack(&mut target.lock(), pack).unwrap();
+    assert!(report.repaired >= 2, "both ancestors should be corrected");
+    assert!(!is_done(&target, &parent));
+    assert!(!is_done(&target, &child));
+    assert!(!is_done(&target, &grandchild));
+}
+
+#[test]
+fn a_consistent_pack_is_left_alone() {
+    let db = new_pad();
+    let parent = add(&db, None, "parent");
+    let child = add(&db, Some(&parent), "child");
+    tasks::set_completed(&db.lock(), &child, true).unwrap();
+
+    let pack = transfer::build_pack(&db.lock()).unwrap();
+    let target = new_pad();
+    let report = transfer::import_pack(&mut target.lock(), pack).unwrap();
+    assert_eq!(report.repaired, 0);
+    assert!(is_done(&target, &parent) && is_done(&target, &child));
+}
+
+#[test]
+fn reconciliation_reaches_the_bottom_of_a_deep_pack() {
+    let db = new_pad();
+    let mut parent: Option<String> = None;
+    let mut chain = Vec::new();
+    for i in 0..30 {
+        let id = add(&db, parent.as_deref(), &format!("level {i}"));
+        chain.push(id.clone());
+        parent = Some(id);
+    }
+    let mut pack = transfer::build_pack(&db.lock()).unwrap();
+    for task in &mut pack.tasks {
+        task.completed_at = Some(1);
+    }
+    // Reopen only the deepest task; every ancestor has to follow.
+    let deepest = chain.last().unwrap().clone();
+    for task in &mut pack.tasks {
+        if task.id == deepest {
+            task.completed_at = None;
+        }
+    }
+
+    let target = new_pad();
+    transfer::import_pack(&mut target.lock(), pack).unwrap();
+    for id in &chain {
+        assert!(!is_done(&target, id), "{id} should be open");
+    }
+}

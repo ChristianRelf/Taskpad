@@ -387,6 +387,7 @@ pub fn import_pack(conn: &mut Connection, pack: Pack) -> Result<ImportReport, Pa
     }
 
     report.repaired += break_cycles(&tx)?;
+    report.repaired += reconcile_completion(&tx)?;
     tx.commit()?;
     Ok(report)
 }
@@ -421,6 +422,61 @@ fn break_cycles(tx: &rusqlite::Transaction<'_>) -> Result<usize, PadError> {
             }
             cursor = parents.get(c).copied().flatten();
         }
+    }
+    Ok(fixed)
+}
+
+/// Restore the invariant the whole UI leans on: a task with children is done
+/// exactly when all of its children are. Records arriving from elsewhere carry
+/// their own `completed_at` and can disagree; the children are authoritative.
+fn reconcile_completion(tx: &rusqlite::Transaction<'_>) -> Result<usize, PadError> {
+    let mut stmt =
+        tx.prepare("SELECT id, parent_id, completed_at FROM tasks WHERE deleted_at IS NULL")?;
+    let rows: Vec<(String, Option<String>, Option<i64>)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+
+    let mut children: std::collections::HashMap<Option<&str>, Vec<usize>> =
+        std::collections::HashMap::new();
+    for (i, (_, parent, _)) in rows.iter().enumerate() {
+        children.entry(parent.as_deref()).or_default().push(i);
+    }
+
+    let now = now_ms();
+    let mut fixed = 0usize;
+    // Post-order, iteratively: a node is only settled once its children are.
+    let mut stack: Vec<(usize, bool)> = children
+        .get(&None)
+        .map(|kids| kids.iter().map(|&i| (i, false)).collect())
+        .unwrap_or_default();
+    let mut done_state: std::collections::HashMap<usize, bool> =
+        std::collections::HashMap::new();
+
+    while let Some((i, expanded)) = stack.pop() {
+        let kids = children.get(&Some(rows[i].0.as_str())).cloned().unwrap_or_default();
+        if !expanded && !kids.is_empty() {
+            stack.push((i, true));
+            for &k in &kids {
+                stack.push((k, false));
+            }
+            continue;
+        }
+
+        let complete = if kids.is_empty() {
+            rows[i].2.is_some()
+        } else {
+            let all = kids.iter().all(|k| done_state.get(k).copied().unwrap_or(false));
+            if all != rows[i].2.is_some() {
+                tx.execute(
+                    "UPDATE tasks SET completed_at = ?2, updated_at = ?3 WHERE id = ?1",
+                    params![rows[i].0, if all { Some(now) } else { None }, now],
+                )?;
+                fixed += 1;
+            }
+            all
+        };
+        done_state.insert(i, complete);
     }
     Ok(fixed)
 }
