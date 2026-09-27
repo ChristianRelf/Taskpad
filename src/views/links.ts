@@ -5,13 +5,17 @@ import { openExternal } from "../external";
 
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"')\]]+/gi;
 
+/** Trailing sentence punctuation belongs to the prose, not to the link. */
+function trimUrl(raw: string): string {
+  return raw.replace(/[.,;:!?]+$/, "");
+}
+
 /** Every http(s) link in a block of notes, de-duplicated, in order. */
 export function findLinks(text: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const match of text.matchAll(URL_PATTERN)) {
-    // Trailing punctuation usually belongs to the sentence, not the URL.
-    const url = match[0].replace(/[.,;:!?]+$/, "");
+    const url = trimUrl(match[0]);
     if (seen.has(url)) continue;
     seen.add(url);
     out.push(url);
@@ -53,7 +57,7 @@ export function linkEmbed(url: string): HTMLElement {
   favicon.appendChild(Icons.globe());
 
   const title = el("span", { class: "embed-title", text: fallback.host || url });
-  const host = el("span", { class: "embed-host", text: fallback.host });
+  const host = el("span", { class: "embed-host" });
 
   const anchor = el(
     "button",
@@ -70,7 +74,9 @@ export function linkEmbed(url: string): HTMLElement {
 
   void preview(url).then((data) => {
     title.textContent = data.title ?? data.host ?? url;
-    host.textContent = data.host;
+    // With no title the hostname is already the heading; printing it twice
+    // just makes the row noisier.
+    host.textContent = data.title ? data.host : "";
     anchor.setAttribute("aria-label", `Open ${data.title ?? data.host} in your browser`);
     if (data.icon) {
       const img = el("img", { src: data.icon, alt: "", width: "14", height: "14" });
@@ -85,4 +91,22 @@ export function linkEmbed(url: string): HTMLElement {
   });
 
   return anchor;
+}
+
+/**
+ * Notes as the reader sees them: plain text with each link swapped for its
+ * embed. The text itself is never rewritten -- this is a view over it.
+ */
+export function renderNotes(text: string): HTMLElement {
+  const view = el("div", { class: "notes-view" });
+  let cursor = 0;
+  for (const match of text.matchAll(URL_PATTERN)) {
+    const start = match.index ?? 0;
+    const url = trimUrl(match[0]);
+    if (start > cursor) view.appendChild(document.createTextNode(text.slice(cursor, start)));
+    view.appendChild(linkEmbed(url));
+    cursor = start + url.length;
+  }
+  if (cursor < text.length) view.appendChild(document.createTextNode(text.slice(cursor)));
+  return view;
 }

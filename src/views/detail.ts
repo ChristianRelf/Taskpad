@@ -4,7 +4,7 @@ import { announce, clear, el, iconButton } from "../dom";
 import { Icons } from "../icons";
 import { store } from "../store";
 import { Checklist, labelOf } from "./checklist";
-import { findLinks, linkEmbed } from "./links";
+import { renderNotes } from "./links";
 
 export interface DetailOptions {
   onBack: () => void;
@@ -120,7 +120,6 @@ export class Detail {
       spellcheck: "false",
     }) as HTMLTextAreaElement;
     title.value = task.title;
-    this.autoGrow(title);
     this.bindField(title, (value) => ({ title: value.replace(/\s+/g, " ").trim() }));
     // Enter in a one-line title should commit, not insert a newline.
     title.addEventListener("keydown", (ev) => {
@@ -140,7 +139,6 @@ export class Detail {
       "aria-label": "Description",
     }) as HTMLTextAreaElement;
     description.value = task.description ?? "";
-    this.autoGrow(description);
     this.bindField(description, (value) => {
       const trimmed = value.replace(/\s+/g, " ").trim();
       return { description: trimmed === "" ? null : trimmed };
@@ -155,6 +153,12 @@ export class Detail {
 
     this.fields.appendChild(this.renderMeta(task));
     this.fields.appendChild(this.renderNotes(task));
+
+    // Sizing a textarea needs layout, so every field is grown only once the
+    // whole block is in the document.
+    for (const field of this.fields.querySelectorAll("textarea")) {
+      this.autoGrow(field);
+    }
   }
 
   private renderMeta(task: Task): HTMLElement {
@@ -235,6 +239,10 @@ export class Detail {
     return meta;
   }
 
+  /**
+   * Notes read as text with embedded links, and become a plain textarea the
+   * moment they are clicked. The stored value is always the raw text.
+   */
   private renderNotes(task: Task): HTMLElement {
     const wrap = el("div", { class: "detail-notes" });
     const notes = el("textarea", {
@@ -242,29 +250,51 @@ export class Detail {
       rows: "3",
       placeholder: "Notes",
       "aria-label": "Notes",
+      hidden: true,
     }) as HTMLTextAreaElement;
     notes.value = task.notes ?? "";
-    this.autoGrow(notes);
 
-    const embeds = el("div", { class: "embeds" });
-    const paint = (text: string) => {
-      clear(embeds);
-      for (const url of findLinks(text)) embeds.appendChild(linkEmbed(url));
-    };
-    paint(notes.value);
-
-    this.bindField(notes, (value) => ({ notes: value === "" ? null : value }));
-    // Redraw embeds as soon as a link appears, without waiting for a save.
-    let painted = notes.value;
-    notes.addEventListener("input", () => {
-      if (findLinks(notes.value).join("\n") !== findLinks(painted).join("\n")) {
-        paint(notes.value);
+    const view = el("div", { class: "notes-view-wrap", tabindex: "0", role: "button" });
+    const paint = () => {
+      clear(view);
+      if (notes.value.trim() === "") {
+        view.appendChild(el("span", { class: "notes-placeholder", text: "Notes" }));
+        view.setAttribute("aria-label", "Add notes");
+      } else {
+        view.appendChild(renderNotes(notes.value));
+        view.setAttribute("aria-label", "Edit notes");
       }
-      painted = notes.value;
+    };
+    paint();
+
+    const edit = (atEnd: boolean) => {
+      view.hidden = true;
+      notes.hidden = false;
+      this.autoGrow(notes);
+      notes.focus();
+      if (atEnd) notes.setSelectionRange(notes.value.length, notes.value.length);
+    };
+    view.addEventListener("click", (ev) => {
+      // Clicking an embed opens the link; clicking the prose starts editing.
+      if ((ev.target as HTMLElement).closest(".embed")) return;
+      edit(true);
+    });
+    view.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        edit(true);
+      }
     });
 
+    this.bindField(notes, (value) => ({ notes: value === "" ? null : value }));
+    notes.addEventListener("blur", () => {
+      notes.hidden = true;
+      view.hidden = false;
+      paint();
+    });
+
+    wrap.appendChild(view);
     wrap.appendChild(notes);
-    wrap.appendChild(embeds);
     return wrap;
   }
 
@@ -303,7 +333,9 @@ export class Detail {
 
   private autoGrow(field: HTMLTextAreaElement): void {
     field.style.height = "auto";
-    field.style.height = `${field.scrollHeight}px`;
+    // scrollHeight is 0 for a detached node; the CSS min-height covers that
+    // case so a field can never collapse out of sight.
+    if (field.scrollHeight > 0) field.style.height = `${field.scrollHeight}px`;
   }
 
   private confirmDelete(task: Task): void {

@@ -188,14 +188,16 @@ export class Checklist {
     }
 
     row.appendChild(
-      iconButton(Icons.plus(), `Add a subtask to ${labelOf(task)}`, () => {
-        this.opts.onOpen(task.id);
-      }, { class: "row-action" }),
-    );
-    row.appendChild(
-      iconButton(Icons.trash(), `Delete ${labelOf(task)}`, () => this.confirmDelete(node), {
-        class: "row-action",
-      }),
+      el(
+        "div",
+        { class: "row-actions" },
+        iconButton(Icons.plus(), `Add a subtask to ${labelOf(task)}`, () => this.opts.onOpen(task.id), {
+          class: "row-action",
+        }),
+        iconButton(Icons.trash(), `Delete ${labelOf(task)}`, () => this.confirmDelete(node), {
+          class: "row-action",
+        }),
+      ),
     );
 
     this.wireDropTarget(row, node);
