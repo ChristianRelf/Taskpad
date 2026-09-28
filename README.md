@@ -80,7 +80,15 @@ npm run tauri build
 ```
 
 Bundles land in `src-tauri/target/release/bundle/` — `.deb` and `.AppImage` on
-Linux, `.dmg` on macOS, `.msi`/`.exe` on Windows.
+Linux, `.dmg` on macOS, `.msi`/`.exe` on Windows. For convenience the Linux
+bundles are also copied to `release/` in this repo (not committed):
+
+| Artifact | Size | Notes |
+| --- | --- | --- |
+| `Pad_0.1.0_amd64.deb` | ~3.3 MB | Uses the system WebKitGTK. `sudo apt install ./Pad_0.1.0_amd64.deb` |
+| `Pad_0.1.0_amd64.AppImage` | ~105 MB | Self-contained; bundles GTK and WebKit. `chmod +x` and run. |
+
+The bare binary is `src-tauri/target/release/pad` (about 7 MB).
 
 ### Tests
 

@@ -6,7 +6,10 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
-    "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "http://**" }, { "url": "https://**" }]
+    },
     "dialog:allow-save",
     "dialog:allow-open",
     "dialog:allow-message"
