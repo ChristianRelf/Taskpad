@@ -167,15 +167,22 @@ class Store {
   async run<T>(fn: () => Promise<T>, onResult?: (value: T) => void): Promise<T | null> {
     try {
       const value = await fn();
+      // A command that works clears whatever failed last; a stale banner is
+      // worse than none.
+      this.lastError = null;
       if (isSnapshot(value)) this.apply(value);
       else await this.refresh();
       onResult?.(value);
       return value;
     } catch (err) {
-      this.lastError = String(err instanceof Error ? err.message : err);
-      this.emit();
+      this.reportError(String(err instanceof Error ? err.message : err));
       return null;
     }
+  }
+
+  reportError(message: string): void {
+    this.lastError = message;
+    this.emit();
   }
 
   clearError(): void {

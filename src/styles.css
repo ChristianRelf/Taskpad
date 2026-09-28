@@ -310,6 +310,24 @@ body.is-reordering .check {
   color: var(--text-muted);
 }
 
+/*
+ * Small controls get a hit area larger than their ink, so the pointer target
+ * is comfortable without the row growing to accommodate it.
+ */
+.check,
+.twisty,
+.grip {
+  position: relative;
+}
+
+.check::after,
+.twisty::after,
+.grip::after {
+  content: "";
+  position: absolute;
+  inset: -6px -3px;
+}
+
 /* Circular checkbox, the one control that is always visible. */
 .check {
   display: flex;
@@ -438,8 +456,14 @@ body.is-reordering .check {
 }
 
 .row-action {
+  position: relative;
   width: 23px;
   height: 23px;
+}
+.row-action::after {
+  content: "";
+  position: absolute;
+  inset: -4px -1px;
 }
 .row-action svg {
   width: 14px;
