@@ -254,15 +254,17 @@ export class Detail {
     }) as HTMLTextAreaElement;
     notes.value = task.notes ?? "";
 
-    const view = el("div", { class: "notes-view-wrap", tabindex: "0", role: "button" });
+    // A group rather than a button: the embeds inside it are buttons of their
+    // own, and nesting those inside one would be nonsense to a screen reader.
+    const view = el("div", { class: "notes-view-wrap", tabindex: "0", role: "group" });
     const paint = () => {
       clear(view);
       if (notes.value.trim() === "") {
         view.appendChild(el("span", { class: "notes-placeholder", text: "Notes" }));
-        view.setAttribute("aria-label", "Add notes");
+        view.setAttribute("aria-label", "Notes. Press Enter to write some.");
       } else {
         view.appendChild(renderNotes(notes.value));
-        view.setAttribute("aria-label", "Edit notes");
+        view.setAttribute("aria-label", "Notes. Press Enter to edit.");
       }
     };
     paint();
@@ -280,6 +282,8 @@ export class Detail {
       edit(true);
     });
     view.addEventListener("keydown", (ev) => {
+      // Only when the group itself has focus; an embed handles its own keys.
+      if (ev.target !== view) return;
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
         edit(true);
